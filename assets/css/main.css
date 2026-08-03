@@ -142,6 +142,10 @@ body.ep-nav-open {
   overflow: hidden;
 }
 
+/* Con la banda activa el documento arranca oscuro: es lo que se ve por detrás
+   del encabezado y en los bordes de las secciones translúcidas. */
+.ep-backdrop-on body { background: var(--ep-navy-950); }
+
 h1, h2, h3, h4, h5 {
   font-family: var(--font-display);
   font-weight: 700;
@@ -677,24 +681,85 @@ hr {
 }
 
 /* Canvas Three.js */
-/* La aparición usa una animación con `forwards`, no una transición: la clase
-   `is-ready` se agrega en el mismo tick en que se crea el canvas, y una
-   transición necesita que el navegador haya calculado antes el estado inicial.
-   Cuando no llega a hacerlo, el canvas se queda en opacidad 0 para siempre. */
-.ep-hero__canvas {
-  position: absolute;
+/* --------------------------------------------------------------------------
+   Banda continua de fondo
+   --------------------------------------------------------------------------
+   Un único canvas fijo detrás de todo el documento. Las secciones se vuelven
+   apenas translúcidas para dejarla asomar sin comprometer la lectura: el
+   encabezado la muestra entera y el resto la deja como textura de fondo.
+   Todo esto sólo se activa si la escena llegó a montarse (`ep-backdrop-on`),
+   así que sin WebGL el sitio conserva sus fondos opacos de siempre.
+   -------------------------------------------------------------------------- */
+.ep-backdrop {
+  position: fixed;
   inset: 0;
-  z-index: -2;
+  z-index: 0;
   width: 100%;
   height: 100%;
   display: block;
-  opacity: 0;
+  pointer-events: none;
 }
-.ep-hero__canvas.is-ready { animation: ep-canvas-in 1.2s var(--ease-out) forwards; }
 
-@keyframes ep-canvas-in {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+/* El fundido de entrada lo hace el propio bucle de render, subiendo la
+   opacidad del material. Hacerlo con CSS resultó frágil: si la animación o la
+   transición no llegaban a arrancar —la clase se agrega en el mismo tick en
+   que se crea el canvas— el elemento se quedaba clavado en opacidad 0 y el
+   canvas no aparecía nunca. Dentro del bucle eso no puede pasar. */
+
+/* El contenido va por encima del canvas de fondo. */
+.ep-backdrop-on .ep-topbar,
+.ep-backdrop-on .ep-nav,
+.ep-backdrop-on main,
+.ep-backdrop-on .ep-footer,
+.ep-backdrop-on .ep-wa,
+.ep-backdrop-on .ep-progress {
+  position: relative;
+  z-index: 1;
+}
+
+.ep-backdrop-on .ep-nav { z-index: 100; }
+.ep-backdrop-on .ep-wa { position: fixed; z-index: 90; }
+.ep-backdrop-on .ep-progress { position: fixed; z-index: 150; }
+
+/* El encabezado deja pasar la banda completa; es su momento de lucirse. */
+.ep-backdrop-on .ep-hero { background: transparent; }
+/* Velo horizontal: opaco sobre la columna de texto —alineada a la izquierda—
+   y transparente en el tercio derecho, que es por donde pasa la banda. */
+.ep-backdrop-on .ep-hero::before {
+  background:
+    linear-gradient(90deg,
+      rgba(4, 16, 31, 0.97) 0%,
+      rgba(4, 16, 31, 0.95) 52%,
+      rgba(4, 16, 31, 0.80) 66%,
+      rgba(4, 16, 31, 0.32) 82%,
+      rgba(4, 16, 31, 0.06) 100%),
+    linear-gradient(180deg,
+      rgba(4, 16, 31, 0.45) 0%,
+      transparent 22%,
+      transparent 68%,
+      rgba(4, 16, 31, 0.55) 100%);
+}
+
+/* En el resto la banda queda como una textura tenue detrás del contenido.
+   92 % de opacidad mantiene el contraste del texto prácticamente intacto. */
+.ep-backdrop-on .ep-section {
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+}
+
+.ep-backdrop-on .ep-marquee {
+  background: color-mix(in srgb, var(--ep-navy-900) 90%, transparent);
+}
+
+.ep-backdrop-on .ep-footer {
+  background: color-mix(in srgb, var(--ep-navy-950) 92%, transparent);
+}
+
+/* Sin `color-mix` el fondo quedaría transparente y el texto ilegible. */
+@supports not (background: color-mix(in srgb, red 50%, transparent)) {
+  .ep-backdrop-on .ep-section,
+  .ep-backdrop-on .ep-marquee,
+  .ep-backdrop-on .ep-footer { background: var(--bg); }
+  .ep-backdrop-on .ep-hero { background: var(--ep-navy-950); }
 }
 
 /* Fallback / capa de contraste sobre el canvas */
@@ -1071,32 +1136,47 @@ hr {
    -------------------------------------------------------------------------- */
 .ep-process { position: relative; }
 
+/* Columnas fijas y no auto-fit: con seis pasos el auto-fit dejaba cinco
+   arriba y el sexto solo en una segunda fila. */
 .ep-process__track {
+  --cols: 2;
+  --gap: clamp(1rem, 2.2vw, 2rem);
   position: relative;
   display: grid;
-  gap: clamp(1.5rem, 3vw, 2rem);
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: 2.25rem var(--gap);
+  grid-template-columns: repeat(var(--cols), 1fr);
 }
 
-/* Línea de conexión */
+@media (min-width: 620px) {
+  .ep-process__track { --cols: 3; }
+}
+
+@media (min-width: 1000px) {
+  .ep-process__track { --cols: 6; }
+}
+
+/* Línea de conexión.
+   Los extremos se calculan a media columna de cada borde, que es justo el
+   centro del primer y del último punto; con un porcentaje fijo la línea
+   sobresalía o se quedaba corta según el ancho. */
 .ep-process__track::before {
   content: "";
   position: absolute;
-  top: 26px;
-  left: 6%;
-  right: 6%;
+  top: 27px;
+  left: calc((100% - (var(--cols) - 1) * var(--gap)) / var(--cols) / 2);
+  right: calc((100% - (var(--cols) - 1) * var(--gap)) / var(--cols) / 2);
   height: 2px;
   background: linear-gradient(90deg,
-    transparent,
-    color-mix(in srgb, var(--accent) 55%, transparent) 12%,
-    color-mix(in srgb, var(--accent) 55%, transparent) 88%,
-    transparent);
+    color-mix(in srgb, var(--accent) 55%, transparent),
+    color-mix(in srgb, var(--accent) 55%, transparent));
   transform: scaleX(var(--progress, 0));
   transform-origin: left;
   transition: transform 1.4s var(--ease-out);
 }
 
-@media (max-width: 719px) {
+/* Con dos o tres columnas los pasos ocupan varias filas y una única línea
+   horizontal dejaría de tener sentido. */
+@media (max-width: 999px) {
   .ep-process__track::before { display: none; }
 }
 
@@ -1164,10 +1244,8 @@ hr {
   width: 100%;
   height: 100%;
   display: block;
-  opacity: 0;
   cursor: grab;
 }
-.ep-showcase__stage canvas.is-ready { animation: ep-canvas-in 900ms var(--ease-out) forwards; }
 .ep-showcase__stage canvas:active { cursor: grabbing; }
 
 .ep-showcase__hint {

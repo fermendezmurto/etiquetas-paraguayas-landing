@@ -3,10 +3,11 @@
  * ---------------------------------------------------------------------------
  * Dos escenas independientes, cada una autocontenida y perezosa:
  *
- *  1. heroRibbons()  — la banda continua de etiquetas corriendo por la prensa
- *                      flexográfica. Cintas con torsión real (frame de Frenet
- *                      aproximado por diferencias finitas) + troquelado dibujado
- *                      en el fragment shader + polvo de tinta en suspensión.
+ *  1. siteRibbon()   — una única banda de etiquetas que recorre el documento
+ *                      entero por detrás del contenido. El scroll no mueve la
+ *                      banda: mueve la cámara y adelanta el cabezal de
+ *                      impresión, de modo que las etiquetas se van imprimiendo
+ *                      a medida que el visitante baja.
  *
  *  2. labelRoll()    — rollo de etiquetas navegable con el arrastre del mouse.
  *                      La textura impresa se genera por código en un <canvas>,
@@ -160,83 +161,117 @@ function watchSize(canvas, renderer, camera, extra) {
 }
 
 /* ==========================================================================
-   Escena 1 — Banda de etiquetas (hero)
+   Escena 1 — La banda continua
+   --------------------------------------------------------------------------
+   Una sola banda de sustrato recorre el documento entero, de arriba abajo,
+   detrás del contenido. El scroll de la página no mueve la banda: mueve la
+   cámara a lo largo de ella y, sobre todo, adelanta el cabezal de impresión.
+
+   Las etiquetas por delante del cabezal son papel en blanco con el troquel
+   marcado; las que ya pasaron salen impresas. Así, bajar por el sitio es
+   literalmente ver correr la tirada.
    ========================================================================== */
 
-const RIBBON_VERT = /* glsl */ `
+/** Trayectoria de la banda. Debe ser idéntica a curve() del vertex shader. */
+const BAND = {
+  len: 150,      // largo total en unidades de mundo
+  amp: 6.2,      // cuánto se abre hacia los costados
+  zBase: -6.0,   // profundidad media
+  zAmp: 3.4,     // cuánto entra y sale de plano
+  weaves: 3.25,  // vaivenes completos de arriba abajo
+};
+
+/**
+ * Punto de la banda para t ∈ [0,1].
+ * Se usa en JS para colocar el cabezal; el shader repite la misma fórmula.
+ */
+function bandPoint(t, out) {
+  const a = t * Math.PI * 2 * BAND.weaves;
+  out.set(
+    Math.sin(a) * BAND.amp,
+    -t * BAND.len,
+    BAND.zBase + Math.cos(a * 0.6 + 1.3) * BAND.zAmp
+  );
+  return out;
+}
+
+const BAND_VERT = /* glsl */ `
   uniform float uTime;
   uniform float uLen;
+  uniform float uAmp;
+  uniform float uZBase;
+  uniform float uZAmp;
+  uniform float uWeaves;
   uniform float uWidth;
-  uniform float uAmpY;
-  uniform float uAmpZ;
-  uniform float uFreq;
-  uniform float uSpeed;
-  uniform float uPhase;
   uniform float uTwist;
 
   varying vec2  vUv;
   varying float vFresnel;
   varying float vShade;
 
-  // Trayectoria del sustrato: dos senoidales desfasadas por eje para que la
-  // banda nunca se lea como una onda plana.
-  vec3 curve(float u) {
-    float a = u * uFreq + uTime * uSpeed + uPhase;
-    float y = uAmpY * sin(a) + uAmpY * 0.38 * sin(a * 2.13 + uTime * 0.55);
-    float z = uAmpZ * cos(a * 0.82 + uPhase * 1.7)
-            + uAmpZ * 0.30 * sin(a * 1.90 - uTime * 0.42);
-    return vec3((u - 0.5) * uLen, y, z);
+  const float TAU = 6.2831853;
+
+  vec3 curve(float t) {
+    float a = t * TAU * uWeaves;
+    return vec3(
+      sin(a) * uAmp,
+      -t * uLen,
+      uZBase + cos(a * 0.6 + 1.3) * uZAmp
+    );
   }
 
   void main() {
     vUv = uv;
 
-    float u = uv.x;
-    float v = uv.y - 0.5;
+    // uv.y corre a lo largo de la banda; uv.x, a lo ancho.
+    float t = uv.y;
+    float across = uv.x - 0.5;
 
-    // Frame local por diferencias finitas (evita subir una curva a la CPU).
-    const float du = 0.0025;
-    vec3 p0 = curve(u);
-    vec3 p1 = curve(u + du);
+    const float dt = 0.0015;
+    vec3 p0 = curve(t);
+    vec3 p1 = curve(t + dt);
     vec3 tangent = normalize(p1 - p0);
 
-    vec3 binormal = normalize(cross(tangent, vec3(0.0, 1.0, 0.0)));
+    // El eje de referencia es Z y no Y: la banda baja casi vertical, y con Y
+    // el producto vectorial se degeneraría.
+    vec3 binormal = normalize(cross(tangent, vec3(0.0, 0.0, 1.0)));
     vec3 normalV  = normalize(cross(binormal, tangent));
 
-    // Torsión: la banda gira sobre su propio eje, como al salir del rodillo.
-    float twist = uTwist * sin(u * 3.1 + uTime * 0.35 + uPhase);
-    vec3 across = binormal * cos(twist) + normalV * sin(twist);
+    // Torsión suave, como el sustrato al salir de un rodillo.
+    float twist = uTwist * sin(t * 9.0 + uTime * 0.25);
+    vec3 side = binormal * cos(twist) + normalV * sin(twist);
 
-    vec3 pos = p0 + across * (v * uWidth);
-    vec3 nrm = normalize(cross(tangent, across));
+    vec3 pos = p0 + side * (across * uWidth);
+    vec3 nrm = normalize(cross(tangent, side));
 
-    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+    vec4 mv = modelViewMatrix * vec4(pos, 1.0);
     vec3 nrmView = normalize(normalMatrix * nrm);
-    vec3 viewDir = normalize(-mvPosition.xyz);
+    vec3 viewDir = normalize(-mv.xyz);
 
-    // El canto de la cinta se enciende; la cara plana se apaga.
-    vFresnel = pow(1.0 - abs(dot(nrmView, viewDir)), 2.2);
-    vShade   = abs(dot(nrmView, normalize(vec3(0.4, 0.8, 0.6)))) * 0.75 + 0.25;
+    vFresnel = pow(1.0 - abs(dot(nrmView, viewDir)), 2.4);
+    vShade   = abs(dot(nrmView, normalize(vec3(0.35, 0.55, 0.75)))) * 0.38 + 0.62;
 
-    gl_Position = projectionMatrix * mvPosition;
+    gl_Position = projectionMatrix * mv;
   }
 `;
 
-const RIBBON_FRAG = /* glsl */ `
+const BAND_FRAG = /* glsl */ `
   precision highp float;
 
-  uniform vec3  uColorA;
-  uniform vec3  uColorB;
-  uniform vec3  uColorEdge;
-  uniform float uOpacity;
+  uniform vec3  uPaper;
+  uniform vec3  uInk;
+  uniform vec3  uAccent;
+  uniform vec3  uEdge;
   uniform float uCells;
+  uniform float uPrint;    // frontera impreso / sin imprimir, en t
+  uniform float uOpacity;
   uniform float uTime;
 
   varying vec2  vUv;
   varying float vFresnel;
   varying float vShade;
 
-  // Rectángulo con bordes suaves. El parámetro se llama halfSize y no half:
+  // Rectángulo de bordes suaves. El parámetro se llama halfSize y no half:
   // "half" es palabra reservada en GLSL ES y el shader no compilaría.
   float roundedRect(vec2 p, vec2 halfSize, float r, float soft) {
     vec2 d = abs(p) - halfSize + r;
@@ -245,32 +280,43 @@ const RIBBON_FRAG = /* glsl */ `
   }
 
   void main() {
-    // Repetición del troquel a lo largo de la banda.
-    float cellF  = vUv.x * uCells;
+    // Troquel repetido a lo largo de la banda.
+    float cellF  = vUv.y * uCells;
     float cellId = floor(cellF);
-    vec2  cellUv = vec2(fract(cellF), vUv.y) - 0.5;
+    vec2  cellUv = vec2(vUv.x, fract(cellF)) - 0.5;
 
-    // Cuerpo de la etiqueta y área impresa interior.
-    float body  = roundedRect(cellUv, vec2(0.44, 0.40), 0.10, 0.012);
-    float print = roundedRect(cellUv, vec2(0.30, 0.24), 0.06, 0.010);
+    float body   = roundedRect(cellUv, vec2(0.40, 0.44), 0.10, 0.012);
+    float head   = roundedRect(cellUv - vec2(0.0, 0.26), vec2(0.30, 0.09), 0.03, 0.010);
+    float lines  = roundedRect(cellUv - vec2(-0.05, 0.02), vec2(0.22, 0.03), 0.02, 0.010);
+    float code   = roundedRect(cellUv - vec2(0.0, -0.26), vec2(0.26, 0.07), 0.02, 0.010);
 
-    // Franja de color que recorre la bobina.
-    float sweep = sin(vUv.x * 5.0 - uTime * 0.55 + cellId * 0.35) * 0.5 + 0.5;
-    vec3  base  = mix(uColorA, uColorB, sweep);
+    // ¿Esta etiqueta ya pasó por el cabezal?
+    float printed = smoothstep(uPrint + 0.006, uPrint - 0.006, vUv.y);
 
-    // La zona impresa levanta el tono; el resto queda como sustrato.
-    vec3 color = mix(base * 0.55, base, body);
-    color = mix(color, color + uColorEdge * 0.35, print * 0.6);
+    // Sin imprimir: sustrato limpio, apenas el troquel marcado.
+    vec3 blank = uPaper * (0.90 + body * 0.10);
 
-    // Sombreado del frame + canto encendido.
+    // Impresa: bloque de cabecera, filete de acento, texto y código.
+    vec3 ink = uPaper;
+    ink = mix(ink, uInk,    head  * 0.92);
+    ink = mix(ink, uAccent, lines * 0.75);
+    ink = mix(ink, uInk,    code  * 0.80);
+
+    vec3 color = mix(blank, ink, printed);
+
+    // Justo en el cabezal, la tinta destella al asentarse.
+    float atHead = exp(-pow((vUv.y - uPrint) * 90.0, 2.0));
+    color += uAccent * atHead * 0.55;
+
     color *= vShade;
-    color += uColorEdge * vFresnel * 0.85;
+    color += uEdge * vFresnel * 0.5;
 
-    // Desvanecido en los extremos: la cinta entra y sale de cuadro.
-    float fadeX = smoothstep(0.0, 0.13, vUv.x) * smoothstep(1.0, 0.87, vUv.x);
-    float fadeY = smoothstep(0.0, 0.05, vUv.y) * smoothstep(1.0, 0.95, vUv.y);
+    // La banda entra y sale de cuadro sin cortes secos.
+    float fadeEnds = smoothstep(0.0, 0.02, vUv.y) * smoothstep(1.0, 0.98, vUv.y);
+    float fadeSide = smoothstep(0.0, 0.05, vUv.x) * smoothstep(1.0, 0.95, vUv.x);
 
-    float alpha = uOpacity * fadeX * fadeY * (0.30 + body * 0.70 + vFresnel * 0.45);
+    float alpha = uOpacity * fadeEnds * fadeSide
+                * (0.74 + body * 0.26 + vFresnel * 0.3 + atHead * 0.4);
 
     if (alpha < 0.004) discard;
     gl_FragColor = vec4(color, alpha);
@@ -286,7 +332,6 @@ const DUST_VERT = /* glsl */ `
 
   void main() {
     vec3 p = position;
-    // Deriva lenta, cada partícula con su propia fase.
     p.x += sin(uTime * 0.14 + aSeed * 6.28) * 1.4;
     p.y += cos(uTime * 0.11 + aSeed * 4.71) * 1.0;
     p.z += sin(uTime * 0.09 + aSeed * 2.35) * 0.8;
@@ -295,8 +340,7 @@ const DUST_VERT = /* glsl */ `
     gl_Position = projectionMatrix * mv;
     gl_PointSize = aScale * uPixelRatio * (34.0 / max(-mv.z, 0.001));
 
-    // Se apagan con la distancia para dar profundidad.
-    vAlpha = smoothstep(46.0, 8.0, -mv.z) * (0.25 + aSeed * 0.55);
+    vAlpha = smoothstep(46.0, 8.0, -mv.z) * (0.2 + aSeed * 0.45);
   }
 `;
 
@@ -314,19 +358,18 @@ const DUST_FRAG = /* glsl */ `
 `;
 
 /**
- * Monta la escena del hero sobre un <canvas>.
+ * Monta la banda continua sobre un canvas fijo, detrás de todo el documento.
  * @returns {{dispose: () => void} | null}
  */
-export function heroRibbons(canvas, options = {}) {
+export function siteRibbon(canvas, options = {}) {
   if (!canvas || !supportsWebGL() || prefersReducedMotion()) return null;
 
   const tier = options.tier || qualityTier();
   if (tier === 'off') return null;
 
   const LOW = tier === 'low';
-  const segments = LOW ? 120 : 260;
-  const dustCount = LOW ? 120 : 340;
-  const maxDpr = LOW ? 1.5 : 2;
+  const segments = LOW ? 220 : 520;
+  const dustCount = LOW ? 90 : 260;
 
   const renderer = new THREE.WebGLRenderer({
     canvas,
@@ -334,65 +377,97 @@ export function heroRibbons(canvas, options = {}) {
     alpha: true,
     powerPreference: 'high-performance',
   });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxDpr));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, LOW ? 1.25 : 1.75));
   renderer.setClearColor(0x000000, 0);
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(PALETTE.navyDeep, 0.026);
+  const camera = new THREE.PerspectiveCamera(46, 1, 0.1, 90);
 
-  const camera = new THREE.PerspectiveCamera(46, 1, 0.1, 120);
-  camera.position.set(0, 0.4, 15);
+  /* --- La banda ---------------------------------------------------------- */
 
-  /* --- Cintas ------------------------------------------------------------ */
+  // Muchos segmentos a lo largo (uv.y) y pocos a lo ancho: la curvatura vive
+  // toda en el eje largo.
+  const bandGeo = new THREE.PlaneGeometry(1, 1, 2, segments);
 
-  const ribbonSpecs = [
-    { y:  1.6, z: -3.0, len: 40, width: 3.0, ampY: 1.5, ampZ: 2.4, freq: 3.4,
-      speed: 0.30, phase: 0.0,  twist: 0.65, cells: 13, opacity: 0.95,
-      a: PALETTE.lime,      b: PALETTE.navyLight, edge: PALETTE.limeBright, rot: -0.10 },
-    { y: -1.9, z: -6.5, len: 52, width: 3.8, ampY: 2.1, ampZ: 3.0, freq: 2.6,
-      speed: 0.22, phase: 2.1,  twist: 0.85, cells: 15, opacity: 0.62,
-      a: PALETTE.navyLight, b: PALETTE.cyan,      edge: PALETTE.cyan,       rot: 0.13 },
-    { y:  4.4, z: -11.0, len: 66, width: 4.6, ampY: 2.6, ampZ: 3.6, freq: 2.0,
-      speed: 0.16, phase: 4.3,  twist: 1.05, cells: 17, opacity: 0.30,
-      a: PALETTE.navy,      b: PALETTE.navyLight, edge: PALETTE.navyLight,  rot: -0.20 },
-    { y: -5.2, z: -14.5, len: 78, width: 5.2, ampY: 3.0, ampZ: 4.0, freq: 1.7,
-      speed: 0.12, phase: 5.9,  twist: 1.15, cells: 19, opacity: 0.18,
-      a: PALETTE.navy,      b: PALETTE.lime,      edge: PALETTE.lime,       rot: 0.24 },
-  ];
+  const bandMat = new THREE.ShaderMaterial({
+    vertexShader: BAND_VERT,
+    fragmentShader: BAND_FRAG,
+    uniforms: {
+      uTime:    { value: 0 },
+      uLen:     { value: BAND.len },
+      uAmp:     { value: BAND.amp },
+      uZBase:   { value: BAND.zBase },
+      uZAmp:    { value: BAND.zAmp },
+      uWeaves:  { value: BAND.weaves },
+      uWidth:   { value: 3.9 },
+      uTwist:   { value: 0.42 },
+      uCells:   { value: 46 },
+      uPrint:   { value: 0 },
+      uOpacity: { value: 0.95 },
+      uPaper:   { value: new THREE.Color(0xe9eef5) },
+      uInk:     { value: new THREE.Color(options.ink || PALETTE.navy) },
+      uAccent:  { value: new THREE.Color(options.accent || PALETTE.lime) },
+      uEdge:    { value: new THREE.Color(PALETTE.limeBright) },
+    },
+    transparent: true,
+    side: THREE.DoubleSide,
+    depthWrite: false,
+  });
 
-  const ribbons = ribbonSpecs.slice(0, LOW ? 2 : 4).map((spec) => {
-    const geometry = new THREE.PlaneGeometry(1, 1, segments, 1);
-    const material = new THREE.ShaderMaterial({
-      vertexShader: RIBBON_VERT,
-      fragmentShader: RIBBON_FRAG,
-      uniforms: {
-        uTime:      { value: 0 },
-        uLen:       { value: spec.len },
-        uWidth:     { value: spec.width },
-        uAmpY:      { value: spec.ampY },
-        uAmpZ:      { value: spec.ampZ },
-        uFreq:      { value: spec.freq },
-        uSpeed:     { value: spec.speed },
-        uPhase:     { value: spec.phase },
-        uTwist:     { value: spec.twist },
-        uCells:     { value: spec.cells },
-        uOpacity:   { value: spec.opacity },
-        uColorA:    { value: new THREE.Color(spec.a) },
-        uColorB:    { value: new THREE.Color(spec.b) },
-        uColorEdge: { value: new THREE.Color(spec.edge) },
-      },
+  const band = new THREE.Mesh(bandGeo, bandMat);
+  band.frustumCulled = false;
+  scene.add(band);
+
+  /* --- Banda de acompañamiento, más lejos y más tenue -------------------- */
+
+  let ghost = null;
+  if (!LOW) {
+    const ghostMat = bandMat.clone();
+    ghostMat.uniforms = THREE.UniformsUtils.clone(bandMat.uniforms);
+    ghostMat.uniforms.uAmp.value = BAND.amp * 1.55;
+    ghostMat.uniforms.uZBase.value = BAND.zBase - 9;
+    ghostMat.uniforms.uWeaves.value = BAND.weaves * 0.62;
+    ghostMat.uniforms.uWidth.value = 4.6;
+    ghostMat.uniforms.uCells.value = 34;
+    ghostMat.uniforms.uOpacity.value = 0.2;
+    ghostMat.uniforms.uInk.value = new THREE.Color(PALETTE.navyLight);
+
+    ghost = new THREE.Mesh(new THREE.PlaneGeometry(1, 1, 2, Math.round(segments * 0.6)), ghostMat);
+    ghost.frustumCulled = false;
+    scene.add(ghost);
+  }
+
+  /* --- Cabezal de impresión ---------------------------------------------- */
+  // Dos cilindros que muerden la banda. Viajan sobre ella siguiendo uPrint,
+  // así que la frontera entre impreso y sin imprimir siempre cae bajo ellos.
+
+  const head = new THREE.Group();
+  const rollerGeo = new THREE.CylinderGeometry(0.62, 0.62, 4.4, LOW ? 16 : 28);
+
+  const rollerMat = new THREE.MeshBasicMaterial({ color: 0x2b3a4d });
+  const inkedMat = new THREE.MeshBasicMaterial({
+    color: options.accent || PALETTE.lime,
+  });
+
+  const rollerTop = new THREE.Mesh(rollerGeo, inkedMat);
+  const rollerBottom = new THREE.Mesh(rollerGeo, rollerMat);
+  rollerTop.position.z = 0.72;
+  rollerBottom.position.z = -0.72;
+  head.add(rollerTop, rollerBottom);
+
+  // Anillo de luz para que el cabezal se lea aun sobre secciones claras.
+  const halo = new THREE.Mesh(
+    new THREE.RingGeometry(2.6, 3.4, 32),
+    new THREE.MeshBasicMaterial({
+      color: options.accent || PALETTE.lime,
       transparent: true,
+      opacity: 0.16,
       side: THREE.DoubleSide,
       depthWrite: false,
-    });
-
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.set(0, spec.y, spec.z);
-    mesh.rotation.z = spec.rot;
-    mesh.frustumCulled = false;
-    scene.add(mesh);
-    return { mesh, material };
-  });
+    })
+  );
+  head.add(halo);
+  scene.add(head);
 
   /* --- Polvo de tinta ---------------------------------------------------- */
 
@@ -402,10 +477,10 @@ export function heroRibbons(canvas, options = {}) {
   const dustSeed = new Float32Array(dustCount);
 
   for (let i = 0; i < dustCount; i += 1) {
-    dustPos[i * 3] = (Math.random() - 0.5) * 46;
-    dustPos[i * 3 + 1] = (Math.random() - 0.5) * 24;
-    dustPos[i * 3 + 2] = -Math.random() * 26 + 4;
-    dustScale[i] = 0.6 + Math.random() * 2.1;
+    dustPos[i * 3] = (Math.random() - 0.5) * 34;
+    dustPos[i * 3 + 1] = -Math.random() * BAND.len;
+    dustPos[i * 3 + 2] = -Math.random() * 18 + 2;
+    dustScale[i] = 0.5 + Math.random() * 1.8;
     dustSeed[i] = Math.random();
   }
 
@@ -430,55 +505,96 @@ export function heroRibbons(canvas, options = {}) {
   dust.frustumCulled = false;
   scene.add(dust);
 
-  /* --- Parallax de cámara ------------------------------------------------ */
+  /* --- Scroll y parallax -------------------------------------------------- */
 
   const pointer = new THREE.Vector2(0, 0);
   const pointerTarget = new THREE.Vector2(0, 0);
-  let scrollFactor = 0;
+  let scrollTarget = 0;
+  let scrollEased = 0;
+
+  const readScroll = () => {
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    scrollTarget = max > 0 ? Math.min(1, Math.max(0, window.scrollY / max)) : 0;
+  };
 
   const onPointerMove = (e) => {
     pointerTarget.x = (e.clientX / window.innerWidth) * 2 - 1;
     pointerTarget.y = (e.clientY / window.innerHeight) * 2 - 1;
   };
 
-  const onScroll = () => {
-    const rect = canvas.getBoundingClientRect();
-    const h = rect.height || 1;
-    scrollFactor = THREE.MathUtils.clamp(-rect.top / h, 0, 1);
-  };
-
-  // El parallax por puntero sólo tiene sentido con mouse/trackpad.
   const finePointer = window.matchMedia('(pointer: fine)').matches;
   if (finePointer) window.addEventListener('pointermove', onPointerMove, { passive: true });
-  window.addEventListener('scroll', onScroll, { passive: true });
-  onScroll();
+  window.addEventListener('scroll', readScroll, { passive: true });
+  window.addEventListener('resize', readScroll, { passive: true });
+  readScroll();
+  scrollEased = scrollTarget;
 
   const unwatch = watchSize(canvas, renderer, camera, () => {
     dustMat.uniforms.uPixelRatio.value = renderer.getPixelRatio();
+    readScroll();
   });
 
-  const loop = createLoop(canvas, (delta, elapsed) => {
-    pointer.x += (pointerTarget.x - pointer.x) * Math.min(1, delta * 2.4);
-    pointer.y += (pointerTarget.y - pointer.y) * Math.min(1, delta * 2.4);
+  /* --- Bucle -------------------------------------------------------------- */
 
-    ribbons.forEach(({ material }) => {
-      material.uniforms.uTime.value = elapsed;
-    });
+  const headPos = new THREE.Vector3();
+  const headAhead = new THREE.Vector3();
+  const camAt = new THREE.Vector3();
+
+  // La cámara mira un poco más adelante que el punto donde está el cabezal:
+  // así el cabezal queda en el tercio superior y no tapado por el contenido.
+  const CAM_LEAD = 0.055;
+
+  // Sin fundido de entrada, a propósito. Este canvas es un fondo: aparece con
+  // la página y listo. Cualquier rampa —CSS o JS— deja la opacidad en manos de
+  // que el bucle avance, y basta con que el navegador estrangule
+  // requestAnimationFrame para que la banda se quede apagada indefinidamente.
+  const loop = createLoop(canvas, (delta, elapsed) => {
+    // Suavizado del scroll: sin esto la banda da tirones con la rueda.
+    const k = Math.min(1, delta * 4.5);
+    scrollEased += (scrollTarget - scrollEased) * k;
+    pointer.x += (pointerTarget.x - pointer.x) * Math.min(1, delta * 2.2);
+    pointer.y += (pointerTarget.y - pointer.y) * Math.min(1, delta * 2.2);
+
+    // El cabezal recorre la banda con el scroll, dejando margen en las puntas.
+    const print = 0.04 + scrollEased * 0.92;
+
+    bandMat.uniforms.uPrint.value = print;
+    bandMat.uniforms.uTime.value = elapsed;
+    if (ghost) {
+      ghost.material.uniforms.uPrint.value = print;
+      ghost.material.uniforms.uTime.value = elapsed;
+    }
     dustMat.uniforms.uTime.value = elapsed;
 
-    camera.position.x = pointer.x * 1.5;
-    camera.position.y = 0.4 - pointer.y * 0.9 - scrollFactor * 2.2;
-    camera.position.z = 15 + scrollFactor * 3.5;
-    camera.lookAt(0, -scrollFactor * 1.2, -4);
+    // Cabezal sobre la banda, orientado según su tangente.
+    bandPoint(print, headPos);
+    bandPoint(print + 0.004, headAhead);
+    head.position.copy(headPos);
+    head.lookAt(headAhead);
+    // Los cilindros nacen sobre Y; se acuestan para cruzar la banda.
+    rollerTop.rotation.z = Math.PI / 2;
+    rollerBottom.rotation.z = Math.PI / 2;
+    rollerTop.rotation.x = elapsed * 2.4;
+    rollerBottom.rotation.x = -elapsed * 2.4;
 
-    dust.rotation.y = elapsed * 0.012;
+    // Cámara: baja junto al cabezal, con parallax suave del puntero.
+    bandPoint(print + CAM_LEAD, camAt);
+    // La cámara va corrida a la izquierda para que la banda quede en el
+    // tercio derecho del cuadro: el texto del sitio es de alineación
+    // izquierda y así no compiten.
+    camera.position.set(
+      -2.4 + pointer.x * 1.1,
+      camAt.y + 1.2,
+      13.5 - pointer.y * 0.8
+    );
+    camera.lookAt(-2.4, camAt.y - 2.5, BAND.zBase);
 
     renderer.render(scene, camera);
   });
 
-  // Un frame inmediato para que el fundido de entrada no muestre el canvas vacío.
   renderer.render(scene, camera);
   canvas.classList.add('is-ready');
+  document.documentElement.classList.add('ep-backdrop-on');
   loop.start();
 
   return {
@@ -486,7 +602,9 @@ export function heroRibbons(canvas, options = {}) {
       loop.dispose();
       unwatch();
       if (finePointer) window.removeEventListener('pointermove', onPointerMove);
-      window.removeEventListener('scroll', onScroll);
+      window.removeEventListener('scroll', readScroll);
+      window.removeEventListener('resize', readScroll);
+      document.documentElement.classList.remove('ep-backdrop-on');
       disposeTree(scene);
       renderer.dispose();
     },
@@ -887,11 +1005,15 @@ export function initScenes(config = {}) {
   const mounted = [];
   const tier = qualityTier();
 
-  const hero = document.querySelector('[data-three="hero"]');
-  if (hero && !hero.dataset.mounted) {
-    const scene = heroRibbons(hero, { tier });
+  const site = document.querySelector('[data-three="site"]');
+  if (site && !site.dataset.mounted) {
+    const scene = siteRibbon(site, {
+      tier,
+      ink: site.dataset.ink || config.ink,
+      accent: site.dataset.accent || config.accent,
+    });
     if (scene) {
-      hero.dataset.mounted = '1';
+      site.dataset.mounted = '1';
       mounted.push(scene);
     }
   }

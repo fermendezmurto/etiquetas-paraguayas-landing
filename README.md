@@ -22,10 +22,13 @@ Queda en <http://localhost:4321>.
 ## Qué tiene
 
 - **Escenas WebGL con three.js**, escritas a mano y autoalojadas (sin CDN):
-  - *Encabezado* — la banda continua de etiquetas corriendo por la prensa
-    flexográfica. Cintas con torsión real (frame de Frenet aproximado por
-    diferencias finitas en el vertex shader) y el troquelado dibujado en el
-    fragment shader, más polvo de tinta en suspensión.
+  - *La banda continua* — una sola tira de sustrato recorre el documento
+    entero por detrás del contenido. El scroll no mueve la banda: mueve la
+    cámara a lo largo de ella y adelanta el cabezal de impresión, así que las
+    etiquetas se van **imprimiendo a medida que el visitante baja**. Por
+    delante del cabezal son papel en blanco con el troquel marcado; por detrás
+    salen impresas. La curvatura y la torsión se calculan en el vertex shader
+    (frame local por diferencias finitas) y el troquelado en el fragment.
   - *Rollo* — modelo 3D navegable con el mouse. La etiqueta impresa se genera
     por código en un `<canvas>`, así que cambia sola si cambian los colores de
     marca y no depende de ninguna imagen.
@@ -44,7 +47,7 @@ Nada de lo anterior es obligatorio para que el sitio funcione:
 | Ahorro de datos o red 2G | No se descarga three.js. |
 | ≤ 4 núcleos o pantalla angosta | Escenas en calidad reducida: menos cintas, menos partículas, menor `devicePixelRatio`. |
 | Sin WebGL | El encabezado queda con su degradado de fondo. |
-| Sin JavaScript | Todo el contenido es visible y navegable. Los reveals no ocultan nada porque el estado inicial se aplica sólo si el JS arrancó. |
+| Sin JavaScript | Todo el contenido es visible y navegable. Los reveals no ocultan nada porque el estado inicial se aplica sólo si el JS arrancó, y las secciones conservan sus fondos opacos. |
 | Pestaña en segundo plano o sección fuera de pantalla | El bucle de render se detiene. |
 
 ## Sobre el contenido
