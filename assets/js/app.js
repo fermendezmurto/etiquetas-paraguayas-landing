@@ -185,10 +185,13 @@
     const nodes = $$('[data-count]');
     if (!nodes.length) return;
 
-    const format = (n, decimals) =>
+    // Sin separador de miles por debajo de 10.000: agrupar convertía el año
+    // «1998» en «1.998». Recién a partir de cinco dígitos agrupar ayuda a leer.
+    const format = (n, decimals, target) =>
       n.toLocaleString('es-PY', {
         minimumFractionDigits: decimals,
         maximumFractionDigits: decimals,
+        useGrouping: Math.abs(target) >= 10000,
       });
 
     const run = (el) => {
@@ -197,7 +200,7 @@
       const decimals = (el.dataset.count.split('.')[1] || '').length;
 
       if (reduced) {
-        el.textContent = format(target, decimals);
+        el.textContent = format(target, decimals, target);
         return;
       }
 
@@ -208,7 +211,7 @@
         const t = Math.min(1, (now - start) / duration);
         // easeOutExpo
         const eased = t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
-        el.textContent = format(target * eased, decimals);
+        el.textContent = format(target * eased, decimals, target);
         if (t < 1) requestAnimationFrame(step);
       };
 

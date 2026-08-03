@@ -89,7 +89,7 @@
   --dur: 320ms;
   --dur-slow: 720ms;
 
-  --nav-h: 76px;
+  --nav-h: 82px;
 }
 
 /* Secciones oscuras: invierten los tokens semánticos, no los de marca */
@@ -244,8 +244,19 @@ hr {
 }
 
 .ep-grid--2 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); }
-.ep-grid--3 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); }
 .ep-grid--4 { grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
+
+/* Tres columnas fijas, no auto-fit: con seis tarjetas el auto-fit metía cuatro
+   arriba y dejaba dos huérfanas abajo. Así siempre quedan 3 y 3. */
+.ep-grid--3 { grid-template-columns: 1fr; }
+
+@media (min-width: 620px) {
+  .ep-grid--3 { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (min-width: 980px) {
+  .ep-grid--3 { grid-template-columns: repeat(3, 1fr); }
+}
 
 /* Encabezado de sección */
 .ep-head {
@@ -294,8 +305,9 @@ hr {
    4. Botones
    -------------------------------------------------------------------------- */
 .ep-btn {
+  /* Los botones con fondo de color llevan el texto en blanco. */
   --btn-bg: var(--ep-lime-500);
-  --btn-fg: var(--ep-navy-950);
+  --btn-fg: var(--ep-white);
   position: relative;
   display: inline-flex;
   align-items: center;
@@ -367,7 +379,18 @@ hr {
 
 .ep-btn--navy {
   --btn-bg: var(--ep-navy-600);
-  --btn-fg: #fff;
+  --btn-fg: var(--ep-white);
+}
+
+/* El barrido de brillo se apaga en los botones de texto blanco: sobre él el
+   texto se vuelve ilegible al pasar. */
+.ep-btn:not(.ep-btn--ghost)::before {
+  background: linear-gradient(
+    110deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.22) 50%,
+    transparent 80%
+  );
 }
 
 .ep-btn--lg { padding: 1.1rem 2.1rem; font-size: var(--step-0); }
@@ -458,7 +481,14 @@ hr {
   margin-right: auto;
   flex: none;
 }
-.ep-nav__brand img { height: 42px; width: auto; }
+/* El logotipo oficial es apaisado (1388×540): se fija la altura y el ancho
+   sale solo. Sin max-width, en móvil empujaría al hamburguesa fuera de caja. */
+.ep-nav__brand img {
+  height: 52px;
+  width: auto;
+  max-width: min(60vw, 260px);
+  object-fit: contain;
+}
 .ep-nav__brand-text {
   font-family: var(--font-display);
   font-weight: 700;
@@ -647,6 +677,10 @@ hr {
 }
 
 /* Canvas Three.js */
+/* La aparición usa una animación con `forwards`, no una transición: la clase
+   `is-ready` se agrega en el mismo tick en que se crea el canvas, y una
+   transición necesita que el navegador haya calculado antes el estado inicial.
+   Cuando no llega a hacerlo, el canvas se queda en opacidad 0 para siempre. */
 .ep-hero__canvas {
   position: absolute;
   inset: 0;
@@ -655,9 +689,13 @@ hr {
   height: 100%;
   display: block;
   opacity: 0;
-  transition: opacity 1.2s var(--ease-out);
 }
-.ep-hero__canvas.is-ready { opacity: 1; }
+.ep-hero__canvas.is-ready { animation: ep-canvas-in 1.2s var(--ease-out) forwards; }
+
+@keyframes ep-canvas-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
 
 /* Fallback / capa de contraste sobre el canvas */
 .ep-hero::before {
@@ -686,7 +724,9 @@ hr {
   pointer-events: none;
 }
 
-.ep-hero__inner { position: relative; z-index: 1; max-width: 780px; }
+/* Un poco más ancho que la columna de texto pura: es lo que necesitan las
+   cuatro cifras para entrar en una fila sin apretarse. */
+.ep-hero__inner { position: relative; z-index: 1; max-width: 880px; }
 
 .ep-hero__badge {
   display: inline-flex;
@@ -737,14 +777,20 @@ hr {
   margin-bottom: 1.85rem;
 }
 
-/* Stats bajo el hero */
+/* Cifras bajo el hero.
+   Grilla y no flex-wrap: con cuatro cifras el wrap dejaba tres arriba y una
+   suelta abajo. Las columnas fijas las mantienen siempre en una sola fila. */
 .ep-hero__stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: clamp(1.25rem, 4vw, 3rem);
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1.5rem clamp(1rem, 2.2vw, 2.25rem);
   margin-top: clamp(2rem, 4vw, 3rem);
   padding-top: 1.5rem;
   border-top: 1px solid rgba(154, 190, 230, 0.16);
+}
+
+@media (min-width: 700px) {
+  .ep-hero__stats { grid-template-columns: repeat(4, 1fr); }
 }
 
 .ep-stat__value {
@@ -752,7 +798,7 @@ hr {
   align-items: baseline;
   gap: 0.1rem;
   font-family: var(--font-display);
-  font-size: clamp(2rem, 4vw, 2.9rem);
+  font-size: clamp(1.8rem, 3.2vw, 2.5rem);
   font-weight: 700;
   line-height: 1;
   letter-spacing: -0.04em;
@@ -1119,10 +1165,9 @@ hr {
   height: 100%;
   display: block;
   opacity: 0;
-  transition: opacity 900ms var(--ease-out);
   cursor: grab;
 }
-.ep-showcase__stage canvas.is-ready { opacity: 1; }
+.ep-showcase__stage canvas.is-ready { animation: ep-canvas-in 900ms var(--ease-out) forwards; }
 .ep-showcase__stage canvas:active { cursor: grabbing; }
 
 .ep-showcase__hint {
@@ -1208,16 +1253,19 @@ hr {
 
 .ep-gallery {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 265px), 1fr));
   gap: clamp(0.85rem, 1.6vw, 1.35rem);
 }
 
+/* Ficha de trabajo. Los escaneos vienen con mucho margen blanco alrededor de
+   la etiqueta; el recorte a 4:3 se come justamente ese margen y deja la
+   etiqueta ocupando la ficha. La etiqueta completa se ve en el visor. */
 .ep-tile {
   position: relative;
-  aspect-ratio: 4 / 5;
+  aspect-ratio: 4 / 3;
   border-radius: var(--r-md);
   overflow: hidden;
-  background: var(--bg-sunken);
+  background: #fff;
   border: 1px solid var(--border);
   cursor: pointer;
   transition: transform var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out),
@@ -1256,8 +1304,16 @@ hr {
 }
 
 .ep-tile:hover { transform: translateY(-4px); box-shadow: var(--shadow-lg); }
-.ep-tile:hover img { transform: scale(1.08); }
+.ep-tile:hover img { transform: scale(1.04); }
 .ep-tile:hover .ep-tile__cap { transform: translateY(0); opacity: 1; }
+
+/* En el visor sí se ve la etiqueta entera, sobre papel y no sobre el fondo
+   oscuro: es el lugar donde se lee la letra chica. */
+.ep-lightbox img {
+  background: #fff;
+  padding: 1.25rem;
+  object-fit: contain;
+}
 
 .ep-tile.is-hidden {
   display: none;
@@ -1533,7 +1589,7 @@ hr {
   border: 0;
   border-radius: var(--r-pill);
   background: var(--ep-lime-500);
-  color: var(--ep-navy-950);
+  color: var(--ep-white);
   font-family: var(--font-display);
   font-size: var(--step-0);
   font-weight: 650;
@@ -1603,7 +1659,7 @@ hr {
 .ep-footer__grid > div:first-child { grid-column: span 1; max-width: 340px; }
 @media (min-width: 900px) { .ep-footer__grid > div:first-child { grid-column: span 2; } }
 
-.ep-footer img { height: 52px; width: auto; margin-bottom: 1.25rem; }
+.ep-footer img { height: 54px; width: auto; max-width: 240px; object-fit: contain; margin-bottom: 1.25rem; }
 
 .ep-footer h4 {
   font-size: 0.78rem;

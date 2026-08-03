@@ -58,12 +58,15 @@ y hay que confirmarlas antes de publicar:**
 - «6 sectores industriales» — surge de agrupar los productos publicados.
 - «100 % producción nacional» — a confirmar con la empresa.
 
-Las imágenes son **placeholders generados por código** (`tools/genimg.mjs`), no
-fotos reales de la planta ni artes de clientes. En el sitio final se reemplazan
-por material propio de la empresa.
+### Imágenes
 
-El logotipo es una marca provisoria; el oficial está en el sitio actual y debe
-sustituirlo.
+Todas las imágenes son **material real de la empresa**, recuperado del sitio
+actual: 35 etiquetas de clientes escaneadas y 5 fotos de planta, recortadas y
+optimizadas (el conjunto entero pesa 5,4 MB). El logotipo también es el oficial.
+
+Lo que sí conviene sumar más adelante: fotografía de planta actualizada. El
+sitio viejo tenía apenas cinco fotos de máquina, y son las que se están usando
+en el bloque institucional y en las novedades.
 
 ## Estructura
 
@@ -73,9 +76,10 @@ assets/css/main.css           sistema de diseño completo (tokens + componentes)
 assets/js/app.js              navegación, reveals, filtros, visor, contadores
 assets/js/three-scenes.js     las dos escenas WebGL
 assets/js/vendor/             three.js r185 (MIT), autoalojado
-assets/img/                   placeholders SVG generados
+assets/img/fotos/trabajos/    35 etiquetas reales de clientes
+assets/img/fotos/sectores/    una etiqueta representativa por rubro
+assets/img/fotos/planta/      fotos de la fábrica
 serve.mjs                     servidor estático mínimo para desarrollo
-tools/genimg.mjs              regenera los placeholders
 ```
 
 No hay dependencias, ni bundler, ni paso de compilación.
