@@ -364,6 +364,10 @@ const DUST_FRAG = /* glsl */ `
 export function siteRibbon(canvas, options = {}) {
   if (!canvas || !supportsWebGL() || prefersReducedMotion()) return null;
 
+  // Sin caja de layout no hay nada que dibujar: es el caso del teléfono, donde
+  // la hoja de estilos lo pone en display:none (ver nota en main.css).
+  if (!canvas.clientWidth || !canvas.clientHeight) return null;
+
   const tier = options.tier || qualityTier();
   if (tier === 'off') return null;
 
@@ -769,7 +773,9 @@ export function labelRoll(canvas, options = {}) {
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 60);
-  camera.position.set(0, 1.15, 6.4);
+  // Un poco más atrás en pantallas chicas: con el encuadre de escritorio el
+  // rollo se salía por el costado.
+  camera.position.set(0, 1.15, LOW ? 7.4 : 6.4);
   camera.lookAt(0, 0, 0);
 
   const group = new THREE.Group();
